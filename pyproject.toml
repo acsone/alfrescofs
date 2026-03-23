@@ -1,0 +1,98 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alfrescofs"
+authors = [{name = "Pierre Halleux", email = "pierre.halleux@acsone.eu"}]
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+]
+description = "fsspec adapter for Alfresco Content Services"
+dynamic = ["version"]
+dependencies = [
+    "fsspec>=2023.1.0",
+    "httpx[http2]",
+]
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.4.2",
+    "pytest-cov",
+    "pytest-asyncio",
+    "coverage[toml]",
+    "authlib",
+]
+
+release = [
+    "towncrier",
+]
+
+[project.entry-points."fsspec.specs"]
+alfresco = "alfrescofs.AlfrescoFS"
+alfd = "alfrescofs.AlfrescoFS"
+
+[project.urls]
+Source = "https://github.com/acsone/alfrescofs"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build]
+directory = "dist"
+
+[tool.hatch.build.targets.wheel]
+sources = ["src"]
+
+[tool.coverage.run]
+branch = true
+source_pkgs = ["alfrescofs"]
+
+[tool.coverage.paths]
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+    "Q",
+    "I",  # isort
+]
+ignore = [
+    "E501",  # line too long, handled by black
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.towncrier]
+name = "Alfresco fsspec adapter"
+package = "alfrescofs"
+package_dir = "src"
+filename = "HISTORY.md"
+directory = "news"
+issue_format = "`#[{issue}](https://acsone.plan.io/issues/{issue}>`_"
+title_format = "{version} ({project_date})"
+
+[tool.pytest.ini_options]
+markers = [
+    "live: marks tests as requiring live Alfresco credentials (deselect with '-m \"not live\"')",
+    "credentials: marks tests as requiring credentials (deselect with '-m \"not credentials\"')",
+]
+addopts = "-v"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
