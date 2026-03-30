@@ -31,7 +31,7 @@ HTTPX_RETRYABLE_ERRORS = (
     httpx.TimeoutException,
 )
 
-HTTPX_RETRYABLE_HTTP_STATUS_CODES = (500, 502, 503, 504)
+HTTPX_RETRYABLE_HTTP_STATUS_CODES = (502, 503, 504)
 
 
 def get_running_loop():
@@ -75,9 +75,14 @@ def wrap_http_not_found_exceptions(func):
         try:
             return await func(*args, **kwargs)
         except httpx.HTTPStatusError as e:
+            body = e.response.text
             if e.response.status_code == 404:
                 raise FileNotFoundError(f"File not found: {e.request.url}") from e
-            raise
+            raise httpx.HTTPStatusError(
+                f"HTTP {e.response.status_code} for {e.request.url}: {body}",
+                request=e.request,
+                response=e.response,
+            ) from e
 
     return wrapper
 
@@ -94,20 +99,29 @@ async def _http_call_with_retry(
             return r
         except HTTPX_RETRYABLE_ERRORS as e:
             if i == retries - 1:
+                _logger.error("Request failed after %d retries: %s", retries, e)
                 raise
-            _logger.debug("Retryable error: %s", e)
+            _logger.warning("Retryable error (attempt %d/%d): %s", i + 1, retries, e)
             await asyncio.sleep(min(1.7**i * 0.1, 15))
         except httpx.HTTPStatusError as e:
             if e.response.status_code in HTTPX_RETRYABLE_HTTP_STATUS_CODES:
                 if i == retries - 1:
-                    raise
-                _logger.debug("Retryable HTTP status code: %s", e.response.status_code)
+                    raise httpx.HTTPStatusError(
+                        f"HTTP {e.response.status_code} for {e.request.url}"
+                        f" (gave up after {retries} retries): {e.response.text}",
+                        request=e.request,
+                        response=e.response,
+                    ) from e
+                _logger.warning(
+                    "Retryable HTTP %s (attempt %d/%d) for %s: %s",
+                    e.response.status_code,
+                    i + 1,
+                    retries,
+                    e.request.url,
+                    e.response.text,
+                )
                 await asyncio.sleep(min(1.7**i * 0.1, 15))
                 continue
-            if e.response.status_code != 404:
-                _logger.error(
-                    "HTTP error %s: %s", e.response.status_code, e.response.content
-                )
             raise
 
 
@@ -331,6 +345,8 @@ class AlfrescoFS(AsyncFileSystem):
             if not path:
                 raise ValueError("path or node_id required")
             node_id = sync(self.loop, self._path_to_node_id, path, True)
+            if not node_id:
+                raise FileNotFoundError(path)
 
         endpoint = node(node_id, *parts) if parts else node(node_id)
 
@@ -346,6 +362,8 @@ class AlfrescoFS(AsyncFileSystem):
             if not path:
                 raise ValueError("path or node_id required")
             node_id = await self._path_to_node_id(path)
+            if not node_id:
+                raise FileNotFoundError(path)
 
         return self._path_to_url(node_id=node_id, parts=parts)
 
@@ -374,6 +392,26 @@ class AlfrescoFS(AsyncFileSystem):
 
     async def _patch(self, url: URLTypes, **kwargs):
         return await self._call_alf("PATCH", url, **kwargs)
+
+    async def _update_metadata(
+        self,
+        path: str,
+        item_id: str | None = None,
+        properties: dict | None = None,
+        aspects: list[str] | None = None,
+    ) -> None:
+        node_id = item_id or await self._path_to_node_id(path)
+        body: dict = {}
+        if properties:
+            body["properties"] = properties
+        if aspects:
+            body["aspectNames"] = aspects
+        if not body:
+            return
+        url = self._api_root.join(node(node_id))
+        await self._put(url, json=body)
+
+    update_metadata = sync_wrapper(_update_metadata)
 
     async def _get_json(self, url: URLTypes, **kwargs):
         return (await self._get(url, **kwargs)).json()
@@ -598,7 +636,14 @@ class AlfrescoFS(AsyncFileSystem):
             data = f.read()
         await self._pipe_file(rpath, data, **kwargs)
 
-    async def _pipe_file(self, path: str, value: bytes, **kwargs):
+    async def _pipe_file(
+        self,
+        path: str,
+        value: bytes,
+        properties: dict | None = None,
+        aspects: list[str] | None = None,
+        **kwargs,
+    ):
         if not isinstance(value, (bytes, bytearray)):
             raise TypeError(
                 "alfrescofs currently supports bytes only for _pipe_file "
@@ -622,6 +667,10 @@ class AlfrescoFS(AsyncFileSystem):
 
         files = {"filedata": (name, value, _guess_type(name))}
         data = {"name": name, "nodeType": "cm:content"}
+        if properties:
+            data["properties"] = properties
+        if aspects:
+            data["aspectNames"] = aspects
 
         url = await self._path_to_url_async(
             path=path, node_id=parent_nid, parts=("children",)
@@ -691,6 +740,8 @@ class AlfrescoFS(AsyncFileSystem):
         create_parents: bool = True,
         exist_ok: bool = False,
         conflict_behavior: Literal["fail", "rename"] = "fail",
+        properties: dict | None = None,
+        aspects: list[str] | None = None,
         **kwargs,
     ):
         path = _norm(self._strip_protocol(path))
@@ -714,28 +765,47 @@ class AlfrescoFS(AsyncFileSystem):
             await self._mkdir(parent, create_parents=True, exist_ok=True)
             parent_nid = await self._path_to_node_id(parent)
 
-        body = {
+        body: dict = {
             "name": name,
             "nodeType": "cm:folder",
         }
+        if properties:
+            body["properties"] = properties
+        if aspects:
+            body["aspectNames"] = aspects
 
+        _logger.info(
+            "_mkdir: creating %r under parent %s body=%s",
+            path,
+            parent_nid,
+            body,
+        )
         url = self._api_root.join(node(parent_nid, "children"))
         params = {"autoRename": "true"} if conflict_behavior == "rename" else {}
 
         try:
-            await self._post(url, json=body, params=params)
+            response = await self._post(url, json=body, params=params)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 409 and exist_ok:
-                return
+                return None
             raise
+
+        return response.json()["entry"]["id"]
 
     async def _makedirs(self, path: str, exist_ok: bool = False):
         await self._mkdir(path, create_parents=True, exist_ok=exist_ok)
 
-    async def _touch(self, path: str, truncate: bool = False, **kwargs):
+    async def _touch(
+        self,
+        path: str,
+        truncate: bool = False,
+        properties: dict | None = None,
+        aspects: list[str] | None = None,
+        **kwargs,
+    ):
         path = _norm(self._strip_protocol(path))
         if truncate or not await self._exists(path):
-            await self._pipe_file(path, b"")
+            await self._pipe_file(path, b"", properties=properties, aspects=aspects)
 
     touch = sync_wrapper(_touch)
 
@@ -810,7 +880,7 @@ class AlfrescoFS(AsyncFileSystem):
     async def _rm_file(self, path: str, item_id: str | None = None, **kwargs):
         nid = item_id or await self._path_to_node_id(path)
         url = await self._path_to_url_async(path=path, node_id=nid)
-        await self._delete(url)
+        await self._delete(url, params={"permanent": "true"})
 
     async def _rmdir(self, path: str, **kwargs):
         if not await self._isdir(path):
@@ -819,7 +889,7 @@ class AlfrescoFS(AsyncFileSystem):
             raise OSError(f"Directory not empty: {path}")
         nid = await self._path_to_node_id(path)
         url = await self._path_to_url_async(path=path, node_id=nid)
-        await self._delete(url)
+        await self._delete(url, params={"permanent": "true"})
 
     rmdir = sync_wrapper(_rmdir)
 
