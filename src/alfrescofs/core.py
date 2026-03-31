@@ -161,6 +161,7 @@ class AlfrescoFS(AsyncFileSystem):
         retries: int = 5,
         root_path: str = "/",
         content_app_url: Optional[str] = None,
+        share_url: Optional[str] = None,
         **kwargs,
     ):
         from fsspec.asyn import get_loop
@@ -213,6 +214,8 @@ class AlfrescoFS(AsyncFileSystem):
         self._content_app_url = (
             resolved_content_app_url.rstrip("/") if resolved_content_app_url else None
         )
+        resolved_share_url = share_url or os.getenv("ALFRESCOFS_SHARE_URL")
+        self._share_url = resolved_share_url.rstrip("/") if resolved_share_url else None
 
         self._client: Optional[Union[httpx.AsyncClient, AsyncOAuth2Client]] = None
         self._client_lock = threading.Lock() if not asynchronous else None
@@ -457,6 +460,25 @@ class AlfrescoFS(AsyncFileSystem):
 
         return "/" + "/".join(parts)
 
+    def _build_weburl(self, node_id: str, type_: str) -> Optional[str]:
+        if self._content_app_url:
+            if type_ == "file":
+                return (
+                    f"{self._content_app_url}/#/personal-files/preview/file/{node_id}"
+                )
+            return f"{self._content_app_url}/#/nodes/{node_id}/children"
+        if self._share_url:
+            if type_ == "file":
+                return (
+                    f"{self._share_url}/page/document-details"
+                    f"?nodeRef=workspace://SpacesStore/{node_id}"
+                )
+            return (
+                f"{self._share_url}/page/folder-details"
+                f"?nodeRef=workspace://SpacesStore/{node_id}"
+            )
+        return None
+
     def _node_entry_to_fsspec_info(self, entry: dict) -> dict:
         is_folder = (
             entry.get("isFolder") is True or entry.get("nodeType") == "cm:folder"
@@ -502,12 +524,11 @@ class AlfrescoFS(AsyncFileSystem):
         if "properties" in entry:
             data["properties"] = entry["properties"]
 
-        if self._content_app_url and _type == "file":
-            node_id = entry.get("id")
-            if node_id:
-                data["weburl"] = (
-                    f"{self._content_app_url}/#/personal-files/preview/file/{node_id}"
-                )
+        node_id = entry.get("id")
+        if node_id:
+            weburl = self._build_weburl(node_id, _type)
+            if weburl:
+                data["weburl"] = weburl
 
         return data
 

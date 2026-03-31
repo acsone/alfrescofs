@@ -191,7 +191,7 @@ def _pipe_nid_side_effect(path):
 
 
 async def test_pipe_file_with_properties_and_aspects():
-    """properties and aspects are forwarded in the POST data for new nodes."""
+    """Properties and aspects are forwarded in the POST data for new nodes."""
     fs = make_fs()
     captured = {}
 
@@ -236,7 +236,7 @@ async def test_pipe_file_without_metadata_omits_keys():
 
 
 async def test_pipe_file_update_ignores_metadata():
-    """properties/aspects are silently ignored when updating an existing node."""
+    """Properties/aspects are silently ignored when updating an existing node."""
     fs = make_fs()
 
     async def fake_put(url, **kwargs):
@@ -351,7 +351,7 @@ async def test_mkdir_returns_node_id():
 
 
 async def test_mkdir_with_properties_and_aspects():
-    """properties and aspects are forwarded in the POST body."""
+    """Properties and aspects are forwarded in the POST body."""
     fs = make_fs()
     captured = {}
 
@@ -436,7 +436,7 @@ async def test_update_metadata_sends_put():
 
 
 async def test_update_metadata_only_properties():
-    """aspectNames key is absent when only properties are passed."""
+    """AspectNames key is absent when only properties are passed."""
     fs = make_fs()
     captured = {}
 
@@ -455,7 +455,7 @@ async def test_update_metadata_only_properties():
 
 
 async def test_update_metadata_only_aspects():
-    """properties key is absent when only aspects are passed."""
+    """Properties key is absent when only aspects are passed."""
     fs = make_fs()
     captured = {}
 
