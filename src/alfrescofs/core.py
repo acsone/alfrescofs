@@ -688,16 +688,15 @@ class AlfrescoFS(AsyncFileSystem):
 
         files = {"filedata": (name, value, _guess_type(name))}
         data = {"name": name, "nodeType": "cm:content"}
-        if properties:
-            data["properties"] = properties
-        if aspects:
-            data["aspectNames"] = aspects
 
         url = await self._path_to_url_async(
             path=path, node_id=parent_nid, parts=("children",)
         )
 
-        return await self._post(url, files=files, data=data)
+        await self._post(url, files=files, data=data)
+
+        if properties or aspects:
+            await self._update_metadata(path, properties=properties, aspects=aspects)
 
     async def _get_move_file_body(self, target_path: str):
         path = _norm(self._strip_protocol(target_path))
@@ -790,16 +789,11 @@ class AlfrescoFS(AsyncFileSystem):
             "name": name,
             "nodeType": "cm:folder",
         }
-        if properties:
-            body["properties"] = properties
-        if aspects:
-            body["aspectNames"] = aspects
 
         _logger.info(
-            "_mkdir: creating %r under parent %s body=%s",
+            "_mkdir: creating %r under parent %s",
             path,
             parent_nid,
-            body,
         )
         url = self._api_root.join(node(parent_nid, "children"))
         params = {"autoRename": "true"} if conflict_behavior == "rename" else {}
@@ -811,7 +805,12 @@ class AlfrescoFS(AsyncFileSystem):
                 return None
             raise
 
-        return response.json()["entry"]["id"]
+        node_id = response.json()["entry"]["id"]
+
+        if properties or aspects:
+            await self._update_metadata(path, properties=properties, aspects=aspects)
+
+        return node_id
 
     async def _makedirs(self, path: str, exist_ok: bool = False):
         await self._mkdir(path, create_parents=True, exist_ok=exist_ok)
@@ -1057,6 +1056,8 @@ class AlfrescoFS(AsyncFileSystem):
 
 class AlfrescoBufferedFile(AbstractBufferedFile):
     def __init__(self, *args, **kwargs):
+        self._properties: dict | None = kwargs.pop("properties", None)
+        self._aspects: list[str] | None = kwargs.pop("aspects", None)
         super().__init__(*args, **kwargs)
         self._node_id: str | None = None
         self._chunk_start: int = 0
@@ -1095,6 +1096,10 @@ class AlfrescoBufferedFile(AbstractBufferedFile):
             self.buffer.seek(0)
             data = self.buffer.read()
             self.fs.pipe_file(self.path, data)
+            if self._properties or self._aspects:
+                self.fs.update_metadata(
+                    self.path, properties=self._properties, aspects=self._aspects
+                )
             return False
 
         self.buffer.seek(0)
@@ -1114,11 +1119,17 @@ class AlfrescoBufferedFile(AbstractBufferedFile):
             self._chunk_start += len(data)
             data = next_data
 
+        if final and (self._properties or self._aspects):
+            self.fs.update_metadata(
+                self.path, properties=self._properties, aspects=self._aspects
+            )
         return not final
 
 
 class AlfrescoStreamedFile(AbstractAsyncStreamedFile):
     def __init__(self, *args, **kwargs):
+        self._properties: dict | None = kwargs.pop("properties", None)
+        self._aspects: list[str] | None = kwargs.pop("aspects", None)
         super().__init__(*args, **kwargs)
         self._node_id: str | None = None
         self._chunk_start: int = 0
@@ -1157,6 +1168,10 @@ class AlfrescoStreamedFile(AbstractAsyncStreamedFile):
             self.buffer.seek(0)
             data = self.buffer.read()
             await self.fs._pipe_file(self.path, data)
+            if self._properties or self._aspects:
+                await self.fs._update_metadata(
+                    self.path, properties=self._properties, aspects=self._aspects
+                )
             return False
 
         self.buffer.seek(0)
@@ -1178,4 +1193,8 @@ class AlfrescoStreamedFile(AbstractAsyncStreamedFile):
             self._chunk_start += len(data)
             data = next_data
 
+        if final and (self._properties or self._aspects):
+            await self.fs._update_metadata(
+                self.path, properties=self._properties, aspects=self._aspects
+            )
         return not final
