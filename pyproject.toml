@@ -17,6 +17,7 @@ dynamic = ["version"]
 dependencies = [
     "fsspec>=2023.1.0",
     "httpx[http2]",
+    "authlib",
 ]
 requires-python = ">=3.10"
 
@@ -26,7 +27,6 @@ test = [
     "pytest-cov",
     "pytest-asyncio",
     "coverage[toml]",
-    "authlib",
 ]
 
 release = [
