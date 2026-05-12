@@ -754,6 +754,21 @@ class AlfrescoFS(AsyncFileSystem):
     mv = sync_wrapper(_mv_file)
     rename = sync_wrapper(_mv_file)
 
+    async def _ensure_parent_node_id(self, parent: str, create_parents: bool) -> str:
+        parent_nid = await self._path_to_node_id(parent)
+        if parent_nid is not None:
+            return parent_nid
+        if not create_parents:
+            raise FileNotFoundError(f"Parent directory does not exist: {parent}")
+        parent_nid = await self._mkdir(parent, create_parents=True, exist_ok=True)
+        if parent_nid is None:
+            parent_nid = await self._path_to_node_id(parent)
+        if parent_nid is None:
+            raise FileNotFoundError(
+                f"Parent directory could not be created or found: {parent}"
+            )
+        return parent_nid
+
     async def _mkdir(
         self,
         path: str,
@@ -767,23 +782,18 @@ class AlfrescoFS(AsyncFileSystem):
         path = _norm(self._strip_protocol(path))
 
         if path == "/":
-            return
+            await self._ensure_root_initialized()
+            return self._root_node_id
 
         nid = await self._path_to_node_id(path)
         if nid is not None:
             if not exist_ok:
                 raise FileExistsError(f"Directory already exists: {path}")
-            return
+            return nid
 
         parent, name = path.rsplit("/", 1)
         parent = parent or "/"
-
-        parent_nid = await self._path_to_node_id(parent)
-        if parent_nid is None:
-            if not create_parents:
-                raise FileNotFoundError(f"Parent directory does not exist: {parent}")
-            await self._mkdir(parent, create_parents=True, exist_ok=True)
-            parent_nid = await self._path_to_node_id(parent)
+        parent_nid = await self._ensure_parent_node_id(parent, create_parents)
 
         body: dict = {
             "name": name,
@@ -802,7 +812,7 @@ class AlfrescoFS(AsyncFileSystem):
             response = await self._post(url, json=body, params=params)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 409 and exist_ok:
-                return None
+                return await self._path_to_node_id(path)
             raise
 
         node_id = response.json()["entry"]["id"]
