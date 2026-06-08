@@ -15,6 +15,7 @@ def test_write_small(temp_fs):
 @pytest.mark.asyncio(loop_scope="function")
 async def test_async_write_small(temp_afs):
     """Same as test_write_small via open_async() → AlfrescoStreamedFile."""
+
     async with await temp_afs._open_async("/test.csv", "wb") as f:
         await f.write(b"hello world")
     assert await temp_afs._cat("/test.csv") == b"hello world"
@@ -63,6 +64,7 @@ def test_open_no_write(temp_fs):
 @pytest.mark.asyncio(loop_scope="function")
 async def test_async_open_no_write(temp_afs):
     """Same as test_open_no_write via open_async() → AlfrescoStreamedFile."""
+
     async with await temp_afs._open_async("/test.csv", "wb") as f:
         assert f.tell() == 0
     assert await temp_afs._cat("/test.csv") == b""

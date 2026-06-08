@@ -243,6 +243,7 @@ def sample_fs(fs, all_test_data):
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def sample_afs(afs, all_test_data):
     """Filesystem preloaded with sample files (async)."""
+
     async with _a_temp_dir(afs) as temp_dir_name:
         sfs = AlfrescoTempFS(path=temp_dir_name, asynchronous=True, fs=afs)
         for flist in all_test_data.values():
@@ -272,6 +273,7 @@ async def function_afs(request):
 @pytest_asyncio.fixture(scope="function", loop_scope="function")
 async def temp_afs(function_afs):
     """Empty temporary filesystem per test (async)."""
+
     async with _a_temp_dir(function_afs) as temp_dir_name:
         yield AlfrescoTempFS(path=temp_dir_name, asynchronous=True, fs=function_afs)
 
@@ -294,6 +296,7 @@ def temp_nested_fs(fs, test_text_files):
 @pytest_asyncio.fixture(scope="function", loop_scope="function")
 async def temp_nested_afs(function_afs, test_text_files):
     """Temporary filesystem with nested files (async)."""
+
     async with _a_temp_dir(function_afs) as temp_dir_name:
         sfs = AlfrescoTempFS(path=temp_dir_name, asynchronous=True, fs=function_afs)
         for path, data in test_text_files.items():
