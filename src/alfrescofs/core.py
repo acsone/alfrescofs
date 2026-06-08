@@ -136,8 +136,8 @@ class RenditionNotReadyError(Exception):
 def node(node_id: str, *parts: str) -> str:
     """Get Alfresco REST paths for node-based endpoints.
 
-    Simple helper that allows higher-level code to not have to manually concatenate
-    'nodes/{id}/...'.
+    Simple helper that allows higher-level code to not have to manually
+    concatenate 'nodes/{id}/...'.
     """
     node_id = node_id.strip("/")
     suffix = "/".join(p.strip("/") for p in parts if p)
