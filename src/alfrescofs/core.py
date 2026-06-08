@@ -125,6 +125,14 @@ async def _http_call_with_retry(
             raise
 
 
+class RenditionNotReadyError(Exception):
+    """Raised when a rendition exists but has not been generated yet.
+
+    Creation is triggered automatically before this is raised. The
+    caller should retry after a short delay.
+    """
+
+
 def node(node_id: str, *parts: str) -> str:
     """Get Alfresco REST paths for node-based endpoints.
 
@@ -1062,6 +1070,59 @@ class AlfrescoFS(AsyncFileSystem):
         if "r" in mode or "a" in mode:
             size = (await self._info(path))["size"]
         return AlfrescoStreamedFile(self, path, mode, size=size, **kwargs)
+
+    async def _get_rendition(
+        self,
+        path: str | None = None,
+        rendition: str = "pdf",
+        item_id: str | None = None,
+        poll_timeout: float = 20.0,
+        poll_interval: float = 0.5,
+    ) -> bytes:
+        if not item_id:
+            if not path:
+                raise ValueError("path or item_id required")
+            await self._ensure_root_initialized()
+            item_id = await self._path_to_node_id(path)
+            if not item_id:
+                raise FileNotFoundError(path)
+
+        content_url = self._api_root.join(
+            node(item_id, "renditions", rendition, "content")
+        )
+        renditions_url = self._api_root.join(node(item_id, "renditions"))
+
+        try:
+            initial_response = await self._get(content_url)
+            return initial_response.content
+        except FileNotFoundError:
+            pass
+
+        try:
+            await self._post(renditions_url, json={"id": rendition})
+        except Exception:
+            _logger.debug(
+                "Rendition trigger failed for %s/%s",
+                renditions_url,
+                rendition,
+                exc_info=True,
+            )
+
+        async def _poll() -> bytes:
+            while True:
+                await asyncio.sleep(poll_interval)
+                try:
+                    poll_response = await self._get(content_url)
+                    return poll_response.content
+                except FileNotFoundError:
+                    pass
+
+        try:
+            return await asyncio.wait_for(_poll(), timeout=poll_timeout)
+        except asyncio.TimeoutError:
+            raise RenditionNotReadyError(rendition) from None
+
+    get_rendition = sync_wrapper(_get_rendition)
 
 
 class AlfrescoBufferedFile(AbstractBufferedFile):
