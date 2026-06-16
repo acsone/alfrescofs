@@ -690,7 +690,8 @@ class AlfrescoFS(AsyncFileSystem):
             url = await self._path_to_url_async(
                 path=path, node_id=existing_nid, parts=("content",)
             )
-            return await self._put(url, content=value, headers=headers)
+            await self._put(url, content=value, headers=headers)
+            return existing_nid
 
         parent_nid = await self._path_to_node_id(parent)
 
@@ -701,10 +702,15 @@ class AlfrescoFS(AsyncFileSystem):
             path=path, node_id=parent_nid, parts=("children",)
         )
 
-        await self._post(url, files=files, data=data)
+        response = await self._post(url, files=files, data=data)
+        node_id = response.json()["entry"]["id"]
 
         if properties or aspects:
-            await self._update_metadata(path, properties=properties, aspects=aspects)
+            await self._update_metadata(
+                path, item_id=node_id, properties=properties, aspects=aspects
+            )
+
+        return node_id
 
     async def _get_move_file_body(self, target_path: str):
         path = _norm(self._strip_protocol(target_path))

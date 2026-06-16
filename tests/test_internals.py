@@ -191,7 +191,7 @@ def _pipe_nid_side_effect(path):
 
 
 async def test_pipe_file_with_properties_and_aspects():
-    """Properties and aspects are forwarded in the POST data for new nodes."""
+    """Properties and aspects are applied by node id after creating new nodes."""
     fs = make_fs()
     captured = {}
 
@@ -204,15 +204,25 @@ async def test_pipe_file_with_properties_and_aspects():
             fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
         ):
             with patch.object(fs, "_post", side_effect=fake_post):
-                await fs._pipe_file(
-                    "/file.txt",
-                    b"content",
-                    properties={"cm:title": "My File"},
-                    aspects=["cm:titled", "cm:auditable"],
-                )
+                with patch.object(
+                    fs, "_update_metadata", new_callable=AsyncMock
+                ) as mock_update_metadata:
+                    node_id = await fs._pipe_file(
+                        "/file.txt",
+                        b"content",
+                        properties={"cm:title": "My File"},
+                        aspects=["cm:titled", "cm:auditable"],
+                    )
 
-    assert captured["properties"] == {"cm:title": "My File"}
-    assert captured["aspectNames"] == ["cm:titled", "cm:auditable"]
+    assert node_id == "new-file-id"
+    mock_update_metadata.assert_called_once_with(
+        "/file.txt",
+        item_id="new-file-id",
+        properties={"cm:title": "My File"},
+        aspects=["cm:titled", "cm:auditable"],
+    )
+    assert "properties" not in captured
+    assert "aspectNames" not in captured
 
 
 async def test_pipe_file_without_metadata_omits_keys():
@@ -229,8 +239,9 @@ async def test_pipe_file_without_metadata_omits_keys():
             fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
         ):
             with patch.object(fs, "_post", side_effect=fake_post):
-                await fs._pipe_file("/file.txt", b"content")
+                node_id = await fs._pipe_file("/file.txt", b"content")
 
+    assert node_id == "new-file-id"
     assert "properties" not in captured
     assert "aspectNames" not in captured
 
@@ -249,13 +260,14 @@ async def test_pipe_file_update_ignores_metadata():
             fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
         ):
             with patch.object(fs, "_put", side_effect=fake_put) as mock_put:
-                await fs._pipe_file(
+                node_id = await fs._pipe_file(
                     "/file.txt",
                     b"new content",
                     properties={"cm:title": "My File"},
                     aspects=["cm:titled"],
                 )
 
+    assert node_id == NODE_ID
     # PUT to content URL is called; no POST (no node creation)
     mock_put.assert_called_once()
 
