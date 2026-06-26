@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from alfrescofs import AlfrescoFS
@@ -577,3 +578,100 @@ def test_directory_has_no_weburl():
     info = fs._node_entry_to_fsspec_info(_dir_entry())
 
     assert "weburl" not in info
+
+
+# ---------------------------------------------------------------------------
+# _update_metadata idempotency on unique-constraint duplicate errors
+# ---------------------------------------------------------------------------
+
+
+def _duplicate_error() -> "httpx.HTTPStatusError":
+    """A 500 raised by Alfresco when a unique property is re-applied."""
+    request = httpx.Request("PUT", f"{BASE_URL}/nodes/{NODE_ID}")
+    response = httpx.Response(
+        500,
+        request=request,
+        text=(
+            "Node with email alias 'lie-pl-2026-0008' already exists. "
+            "Duplicate isn't allowed."
+        ),
+    )
+    return httpx.HTTPStatusError("dup", request=request, response=response)
+
+
+async def test_update_metadata_idempotent_when_already_applied():
+    """A duplicate error is swallowed when the node already has the metadata."""
+    fs = make_fs()
+    info = {
+        "properties": {"emailserver:alias": "lie-pl-2026-0008"},
+        "aspects": ["emailserver:aliasable"],
+    }
+
+    with patch.object(fs, "_put", new_callable=AsyncMock) as mock_put:
+        mock_put.side_effect = _duplicate_error()
+        with patch.object(
+            fs, "_info", new_callable=AsyncMock, return_value=info
+        ) as mock_info:
+            await fs._update_metadata(
+                "/Plainte/2026/x",
+                item_id=NODE_ID,
+                properties={"emailserver:alias": "lie-pl-2026-0008"},
+                aspects=["emailserver:aliasable"],
+            )
+
+    mock_put.assert_called_once()
+    mock_info.assert_called_once_with(None, item_id=NODE_ID)
+
+
+async def test_update_metadata_reraises_when_value_not_present():
+    """A duplicate owned by a different node (value absent here) re-raises."""
+    fs = make_fs()
+    info = {"properties": {}, "aspects": []}
+
+    with patch.object(fs, "_put", new_callable=AsyncMock) as mock_put:
+        mock_put.side_effect = _duplicate_error()
+        with patch.object(fs, "_info", new_callable=AsyncMock, return_value=info):
+            with pytest.raises(httpx.HTTPStatusError):
+                await fs._update_metadata(
+                    "/Plainte/2026/x",
+                    item_id=NODE_ID,
+                    properties={"emailserver:alias": "lie-pl-2026-0008"},
+                    aspects=["emailserver:aliasable"],
+                )
+
+
+async def test_update_metadata_reraises_when_readback_fails():
+    """If the node can't be read back, the original error propagates."""
+    fs = make_fs()
+
+    with patch.object(fs, "_put", new_callable=AsyncMock) as mock_put:
+        mock_put.side_effect = _duplicate_error()
+        with patch.object(
+            fs, "_info", new_callable=AsyncMock, side_effect=FileNotFoundError
+        ):
+            with pytest.raises(httpx.HTTPStatusError):
+                await fs._update_metadata(
+                    "/Plainte/2026/x",
+                    item_id=NODE_ID,
+                    properties={"emailserver:alias": "lie-pl-2026-0008"},
+                )
+
+
+async def test_update_metadata_partial_match_reraises():
+    """All requested properties must match; a partial match re-raises."""
+    fs = make_fs()
+    info = {
+        "properties": {"emailserver:alias": "lie-pl-2026-0008"},
+        "aspects": [],
+    }
+
+    with patch.object(fs, "_put", new_callable=AsyncMock) as mock_put:
+        mock_put.side_effect = _duplicate_error()
+        with patch.object(fs, "_info", new_callable=AsyncMock, return_value=info):
+            with pytest.raises(httpx.HTTPStatusError):
+                await fs._update_metadata(
+                    "/Plainte/2026/x",
+                    item_id=NODE_ID,
+                    properties={"emailserver:alias": "lie-pl-2026-0008"},
+                    aspects=["emailserver:aliasable"],
+                )

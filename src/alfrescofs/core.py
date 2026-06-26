@@ -420,9 +420,46 @@ class AlfrescoFS(AsyncFileSystem):
         if not body:
             return
         url = self._api_root.join(node(node_id))
-        await self._put(url, json=body)
+        try:
+            await self._put(url, json=body)
+        except httpx.HTTPStatusError:
+            # Metadata PUT is not idempotent for unique-constrained properties. If the
+            # first attempt applied the value but its response was lost, a retry can
+            # fail as a duplicate. So, re-read the node and ignore the failure when
+            # it already has the intended metadata. Otherwise, re-raise.
+            if not await self._metadata_already_applied(node_id, properties, aspects):
+                raise
+            _logger.info(
+                "_update_metadata: node %s already carries the requested "
+                "metadata; treating duplicate error as success "
+                "(idempotent retry)",
+                node_id,
+            )
 
     update_metadata = sync_wrapper(_update_metadata)
+
+    async def _metadata_already_applied(
+        self,
+        node_id: str,
+        properties: dict | None,
+        aspects: list[str] | None,
+    ) -> bool:
+        """Return True if the node already carries the given metadata."""
+        try:
+            info = await self._info(None, item_id=node_id)
+        except (FileNotFoundError, httpx.HTTPStatusError):
+            return False
+        current_properties = info.get("properties") or {}
+        current_aspects = info.get("aspects") or []
+        if properties:
+            for key, value in properties.items():
+                if current_properties.get(key) != value:
+                    return False
+        if aspects:
+            for aspect in aspects:
+                if aspect not in current_aspects:
+                    return False
+        return True
 
     async def _get_json(self, url: URLTypes, **kwargs):
         return (await self._get(url, **kwargs)).json()
