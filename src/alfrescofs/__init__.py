@@ -5,6 +5,7 @@ from .core import (
     AlfrescoFS,
     AlfrescoStreamedFile,
     RenditionNotReadyError,
+    RenditionNotSupportedError,
 )
 
 # Register AlfrescoFS for all supported protocols

@@ -133,6 +133,10 @@ class RenditionNotReadyError(Exception):
     """
 
 
+class RenditionNotSupportedError(Exception):
+    """Raised when Alfresco cannot produce the rendition for that node."""
+
+
 def node(node_id: str, *parts: str) -> str:
     """Get Alfresco REST paths for node-based endpoints.
 
@@ -1114,6 +1118,19 @@ class AlfrescoFS(AsyncFileSystem):
             size = (await self._info(path))["size"]
         return AlfrescoStreamedFile(self, path, mode, size=size, **kwargs)
 
+    async def _trigger_rendition(self, renditions_url: URL, rendition: str) -> None:
+        try:
+            await self._post(renditions_url, json={"id": rendition})
+        except Exception as e:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
+                raise RenditionNotSupportedError(rendition) from e
+            _logger.debug(
+                "Rendition trigger failed for %s/%s",
+                renditions_url,
+                rendition,
+                exc_info=True,
+            )
+
     async def _get_rendition(
         self,
         path: str | None = None,
@@ -1141,15 +1158,7 @@ class AlfrescoFS(AsyncFileSystem):
         except FileNotFoundError:
             pass
 
-        try:
-            await self._post(renditions_url, json={"id": rendition})
-        except Exception:
-            _logger.debug(
-                "Rendition trigger failed for %s/%s",
-                renditions_url,
-                rendition,
-                exc_info=True,
-            )
+        await self._trigger_rendition(renditions_url, rendition)
 
         async def _poll() -> bytes:
             while True:
