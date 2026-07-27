@@ -607,11 +607,21 @@ class AlfrescoFS(AsyncFileSystem):
     ) -> Dict[str, Any]:
         await self._ensure_root_initialized()
 
-        url = await self._path_to_url_async(path=path, node_id=item_id)
+        params = {"include": self._build_include(include)}
+        if item_id:
+            url = self._path_to_url(node_id=item_id)
+        else:
+            if not path:
+                raise ValueError("path or item_id required")
+            relative_path = _norm(self._strip_protocol(path))
+            url = self._path_to_url(node_id=self._root_node_id)
+            if relative_path != "/":
+                params["relativePath"] = relative_path.lstrip("/")
 
-        payload = await self._get_json(
-            url, params={"include": self._build_include(include)}
-        )
+        try:
+            payload = await self._get_json(url, params=params)
+        except FileNotFoundError:
+            raise FileNotFoundError(path or item_id) from None
         entry = payload.get("entry", {})
 
         return self._node_entry_to_fsspec_info(entry)

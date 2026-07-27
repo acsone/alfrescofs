@@ -88,6 +88,60 @@ async def test_info_include_forwarded_to_http_params():
     assert mock_get.call_args[1]["params"]["include"] == "path,properties"
 
 
+async def test_info_by_path_resolves_in_a_single_request():
+    """_info addresses the node by relativePath instead of resolving its id first."""
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_get_json", new_callable=AsyncMock, return_value=MINIMAL_PAYLOAD
+    ) as mock_get:
+        with patch.object(
+            fs, "_path_to_node_id", new_callable=AsyncMock
+        ) as mock_resolve:
+            await fs._info("/dir/file.txt")
+
+    mock_resolve.assert_not_called()
+    assert mock_get.call_count == 1
+    assert str(mock_get.call_args[0][0]).endswith(f"nodes/{ROOT_ID}")
+    assert mock_get.call_args[1]["params"]["relativePath"] == "dir/file.txt"
+
+
+async def test_info_of_root_has_no_relative_path():
+    """The root node needs no relativePath parameter."""
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_get_json", new_callable=AsyncMock, return_value=MINIMAL_PAYLOAD
+    ) as mock_get:
+        await fs._info("/")
+
+    assert "relativePath" not in mock_get.call_args[1]["params"]
+
+
+async def test_info_by_item_id_ignores_path():
+    """An explicit item_id addresses the node directly."""
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_get_json", new_callable=AsyncMock, return_value=MINIMAL_PAYLOAD
+    ) as mock_get:
+        await fs._info(None, item_id=NODE_ID)
+
+    assert str(mock_get.call_args[0][0]).endswith(f"nodes/{NODE_ID}")
+    assert "relativePath" not in mock_get.call_args[1]["params"]
+
+
+async def test_info_missing_path_raises_file_not_found():
+    """A missing node is reported against the requested path."""
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_get_json", new_callable=AsyncMock, side_effect=FileNotFoundError("url")
+    ):
+        with pytest.raises(FileNotFoundError, match="/dir/file.txt"):
+            await fs._info("/dir/file.txt")
+
+
 async def test_fetch_children_include_forwarded_to_http_params():
     """_fetch_children forwards include to HTTP params."""
     list_payload = {"list": {"entries": [], "pagination": {"hasMoreItems": False}}}
