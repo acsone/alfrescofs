@@ -152,7 +152,20 @@ async def test_fetch_children_include_forwarded_to_http_params():
     ) as mock_get:
         await fs._fetch_children("http://fake/children", include="aspectNames")
 
-    assert mock_get.call_args[1]["params"]["include"] == "path,aspectNames"
+    assert mock_get.call_args[1]["params"]["include"] == "path,properties,aspectNames"
+
+
+async def test_fetch_children_always_includes_properties():
+    """Children listings carry properties, which Alfresco omits by default."""
+    list_payload = {"list": {"entries": [], "pagination": {"hasMoreItems": False}}}
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_get_json", new_callable=AsyncMock, return_value=list_payload
+    ) as mock_get:
+        await fs._fetch_children("http://fake/children")
+
+    assert mock_get.call_args[1]["params"]["include"] == "path,properties"
 
 
 # ---------------------------------------------------------------------------

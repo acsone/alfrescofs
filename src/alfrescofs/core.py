@@ -585,8 +585,10 @@ class AlfrescoFS(AsyncFileSystem):
         return (await self._path_to_node_id(path)) is not None
 
     @staticmethod
-    def _build_include(extra: Union[str, list, None] = None) -> str:
-        base = ["path"]
+    def _build_include(
+        extra: Union[str, list, None] = None, base: tuple[str, ...] = ("path",)
+    ) -> str:
+        include = list(base)
         if extra:
             extras = (
                 [e.strip() for e in extra.split(",")]
@@ -594,9 +596,9 @@ class AlfrescoFS(AsyncFileSystem):
                 else list(extra)
             )
             for e in extras:
-                if e and e not in base:
-                    base.append(e)
-        return ",".join(base)
+                if e and e not in include:
+                    include.append(e)
+        return ",".join(include)
 
     async def _info(
         self,
@@ -641,7 +643,11 @@ class AlfrescoFS(AsyncFileSystem):
     async def _fetch_children(
         self, url, include: Union[str, list, None] = None
     ) -> list[dict]:
-        params: dict = {"include": self._build_include(include)}
+        # Alfresco returns properties by default on GET /nodes/{id}, but not its
+        # children's, so we have to ask for them explicitly.
+        params: dict = {
+            "include": self._build_include(include, base=("path", "properties"))
+        }
         items = []
         while True:
             payload = await self._get_json(url, params=params)
