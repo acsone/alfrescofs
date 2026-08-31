@@ -39,8 +39,14 @@ You can also use it directly with pandas or any other fsspec-compatible library:
 ```python
 import pandas as pd
 
-storage_options = {"base_url": "https://your-alfresco-host", "username": "admin", "password": "admin"}
-df = pd.read_csv("alfd:///Sites/mysite/documentLibrary/data.csv", storage_options=storage_options)
+storage_options = {
+    "base_url": "https://your-alfresco-host",
+    "username": "admin",
+    "password": "admin",
+}
+df = pd.read_csv(
+    "alfd:///Sites/mysite/documentLibrary/data.csv", storage_options=storage_options
+)
 ```
 
 ## Authentication

@@ -1,4 +1,5 @@
-"""Unit tests for internal path-utility helpers: _norm(), node(), parse_range_header()."""
+"""Unit tests for internal path-utility helpers: _norm(), node(),
+parse_range_header()."""
 
 import pytest
 
