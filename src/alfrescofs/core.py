@@ -33,6 +33,21 @@ HTTPX_RETRYABLE_ERRORS = (
 
 HTTPX_RETRYABLE_HTTP_STATUS_CODES = (502, 503, 504)
 
+# "overwrite" and "create" are fsspec's own pipe_file modes. The rest are Alfresco.
+WriteMode = Literal[
+    "overwrite",
+    "create",
+    "increment",
+    "new_major_version",
+    "use_existing",
+]
+
+UPLOAD_FIELDS_BY_MODE = {
+    "increment": {"autoRename": "true"},
+    "overwrite": {"overwrite": "true"},
+    "new_major_version": {"overwrite": "true", "majorVersion": "true"},
+}
+
 
 def get_running_loop():
     """Get the currently running event loop."""
@@ -46,6 +61,10 @@ def get_running_loop():
 
 def _guess_type(path: str) -> str:
     return mimetypes.guess_type(path)[0] or "application/octet-stream"
+
+
+def _bool_param(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def _norm(path: str) -> str:
@@ -726,8 +745,11 @@ class AlfrescoFS(AsyncFileSystem):
         self,
         path: str,
         value: bytes,
+        mode: WriteMode = "overwrite",
         properties: dict | None = None,
         aspects: list[str] | None = None,
+        versioning_enabled: bool | None = None,
+        comment: str | None = None,
         **kwargs,
     ):
         if not isinstance(value, (bytes, bytearray)):
@@ -740,26 +762,31 @@ class AlfrescoFS(AsyncFileSystem):
         parent, name = path.rsplit("/", 1)
         parent = parent or "/"
 
-        existing_nid = await self._path_to_node_id(path)
-        if existing_nid:
-            headers = kwargs.get("headers", {}).copy()
-            headers.setdefault("Content-Type", _guess_type(path))
-            url = await self._path_to_url_async(
-                path=path, node_id=existing_nid, parts=("content",)
-            )
-            await self._put(url, content=value, headers=headers)
-            return existing_nid
+        if mode == "use_existing":
+            existing_nid = await self._path_to_node_id(path)
+            if existing_nid:
+                return existing_nid
 
         parent_nid = await self._path_to_node_id(parent)
 
         files = {"filedata": (name, value, _guess_type(name))}
         data = {"name": name, "nodeType": "cm:content"}
+        data.update(UPLOAD_FIELDS_BY_MODE.get(mode, {}))
+        if versioning_enabled is not None:
+            data["versioningEnabled"] = _bool_param(versioning_enabled)
+        if comment is not None:
+            data["comment"] = comment
 
         url = await self._path_to_url_async(
             path=path, node_id=parent_nid, parts=("children",)
         )
 
-        response = await self._post(url, files=files, data=data)
+        try:
+            response = await self._post(url, files=files, data=data)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                raise FileExistsError(f"File already exists: {path}") from e
+            raise
         node_id = response.json()["entry"]["id"]
 
         if properties or aspects:
@@ -779,6 +806,19 @@ class AlfrescoFS(AsyncFileSystem):
 
         return {"targetParentId": nid, "name": name}
 
+    async def _post_node_action(self, url, body, target_path):
+        """POST a copy or a move. Raise a 409 when the name is taken.
+
+        The endpoints do not support autoRename, so the caller has to
+        pick a new name.
+        """
+        try:
+            return await self._post(url, json=body)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                raise FileExistsError(f"File already exists: {target_path}") from e
+            raise
+
     async def _cp_file(
         self,
         origin_path: str,
@@ -791,7 +831,7 @@ class AlfrescoFS(AsyncFileSystem):
         url = await self._path_to_url_async(node_id=nid, parts=("copy",))
         body = await self._get_move_file_body(target_path)
 
-        return await self._post(url, json=body)
+        return await self._post_node_action(url, body, target_path)
 
     async def _mv_file(
         self,
@@ -801,11 +841,26 @@ class AlfrescoFS(AsyncFileSystem):
         **kwargs,
     ):
         origin_path = _norm(self._strip_protocol(origin_path))
+        target_path = _norm(self._strip_protocol(target_path))
         nid = item_id or await self._path_to_node_id(origin_path)
+
+        if origin_path.rsplit("/", 1)[0] == target_path.rsplit("/", 1)[0]:
+            return await self._rename_node(nid, target_path)
+
         url = await self._path_to_url_async(node_id=nid, parts=("move",))
         body = await self._get_move_file_body(target_path)
 
-        return await self._post(url, json=body)
+        return await self._post_node_action(url, body, target_path)
+
+    async def _rename_node(self, node_id: str, target_path: str):
+        url = self._api_root.join(node(node_id))
+        name = target_path.rsplit("/", 1)[1]
+        try:
+            return await self._put(url, json={"name": name})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                raise FileExistsError(f"File already exists: {target_path}") from e
+            raise
 
     async def _copy(
         self,
@@ -845,7 +900,7 @@ class AlfrescoFS(AsyncFileSystem):
         path: str,
         create_parents: bool = True,
         exist_ok: bool = False,
-        conflict_behavior: Literal["fail", "rename"] = "fail",
+        mode: Literal["create", "increment"] = "create",
         properties: dict | None = None,
         aspects: list[str] | None = None,
         **kwargs,
@@ -856,11 +911,12 @@ class AlfrescoFS(AsyncFileSystem):
             await self._ensure_root_initialized()
             return self._root_node_id
 
-        nid = await self._path_to_node_id(path)
-        if nid is not None:
-            if not exist_ok:
-                raise FileExistsError(f"Directory already exists: {path}")
-            return nid
+        if mode != "increment":
+            nid = await self._path_to_node_id(path)
+            if nid is not None:
+                if not exist_ok:
+                    raise FileExistsError(f"Directory already exists: {path}")
+                return nid
 
         parent, name = path.rsplit("/", 1)
         parent = parent or "/"
@@ -877,7 +933,7 @@ class AlfrescoFS(AsyncFileSystem):
             parent_nid,
         )
         url = self._api_root.join(node(parent_nid, "children"))
-        params = {"autoRename": "true"} if conflict_behavior == "rename" else {}
+        params = {"autoRename": "true"} if mode == "increment" else {}
 
         try:
             response = await self._post(url, json=body, params=params)
@@ -978,19 +1034,29 @@ class AlfrescoFS(AsyncFileSystem):
 
     checkin = sync_wrapper(_checkin)
 
-    async def _rm_file(self, path: str, item_id: str | None = None, **kwargs):
+    @staticmethod
+    def _delete_params(permanent: bool | None) -> dict:
+        return {} if permanent is None else {"permanent": str(permanent).lower()}
+
+    async def _rm_file(
+        self,
+        path: str,
+        item_id: str | None = None,
+        permanent: bool | None = None,
+        **kwargs,
+    ):
         nid = item_id or await self._path_to_node_id(path)
         url = await self._path_to_url_async(path=path, node_id=nid)
-        await self._delete(url, params={"permanent": "true"})
+        await self._delete(url, params=self._delete_params(permanent))
 
-    async def _rmdir(self, path: str, **kwargs):
+    async def _rmdir(self, path: str, permanent: bool | None = None, **kwargs):
         if not await self._isdir(path):
             raise FileNotFoundError(f"Directory not found: {path}")
         if await self._ls(path, detail=True):
             raise OSError(f"Directory not empty: {path}")
         nid = await self._path_to_node_id(path)
         url = await self._path_to_url_async(path=path, node_id=nid)
-        await self._delete(url, params={"permanent": "true"})
+        await self._delete(url, params=self._delete_params(permanent))
 
     rmdir = sync_wrapper(_rmdir)
 

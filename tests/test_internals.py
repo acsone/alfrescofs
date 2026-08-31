@@ -314,32 +314,6 @@ async def test_pipe_file_without_metadata_omits_keys():
     assert "aspectNames" not in captured
 
 
-async def test_pipe_file_update_ignores_metadata():
-    """Properties/aspects are silently ignored when updating an existing node."""
-    fs = make_fs()
-
-    async def fake_put(url, **kwargs):
-        return MagicMock()
-
-    with patch.object(
-        fs, "_path_to_node_id", new_callable=AsyncMock, return_value=NODE_ID
-    ):
-        with patch.object(
-            fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
-        ):
-            with patch.object(fs, "_put", side_effect=fake_put) as mock_put:
-                node_id = await fs._pipe_file(
-                    "/file.txt",
-                    b"new content",
-                    properties={"cm:title": "My File"},
-                    aspects=["cm:titled"],
-                )
-
-    assert node_id == NODE_ID
-    # PUT to content URL is called; no POST (no node creation)
-    mock_put.assert_called_once()
-
-
 # ---------------------------------------------------------------------------
 # Delete
 # ---------------------------------------------------------------------------
@@ -357,6 +331,82 @@ async def test_rm_file_skips_lookup_when_item_id_given():
                 await fs._rm_file("/file.txt", item_id=NODE_ID)
 
     mock_nid.assert_not_called()
+
+
+async def test_rm_file_sends_no_permanent_flag_by_default():
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
+    ):
+        with patch.object(fs, "_delete", new_callable=AsyncMock) as mock_delete:
+            await fs._rm_file("/file.txt", item_id=NODE_ID)
+
+    assert mock_delete.await_args.kwargs["params"] == {}
+
+
+async def test_rm_file_sends_permanent_flag_when_asked():
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
+    ):
+        with patch.object(fs, "_delete", new_callable=AsyncMock) as mock_delete:
+            await fs._rm_file("/file.txt", item_id=NODE_ID, permanent=True)
+
+    assert mock_delete.await_args.kwargs["params"] == {"permanent": "true"}
+
+
+# ---------------------------------------------------------------------------
+# Rename / move
+# ---------------------------------------------------------------------------
+
+
+async def test_mv_file_renames_in_place_when_parent_is_unchanged():
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_path_to_node_id", new_callable=AsyncMock, return_value=NODE_ID
+    ):
+        with patch.object(fs, "_put", new_callable=AsyncMock) as mock_put:
+            with patch.object(fs, "_post", new_callable=AsyncMock) as mock_post:
+                await fs._mv_file("/dir/old.txt", "/dir/new.txt")
+
+    mock_post.assert_not_called()
+    assert mock_put.await_args.kwargs["json"] == {"name": "new.txt"}
+
+
+async def test_mv_file_moves_when_parent_changes():
+    fs = make_fs()
+
+    with patch.object(
+        fs, "_path_to_node_id", new_callable=AsyncMock, return_value=NODE_ID
+    ):
+        with patch.object(
+            fs, "_path_to_url_async", new_callable=AsyncMock, return_value="http://fake"
+        ):
+            with patch.object(fs, "_put", new_callable=AsyncMock) as mock_put:
+                with patch.object(fs, "_post", new_callable=AsyncMock) as mock_post:
+                    await fs._mv_file("/dir/f.txt", "/other/f.txt")
+
+    mock_put.assert_not_called()
+    assert mock_post.await_args.kwargs["json"] == {
+        "targetParentId": NODE_ID,
+        "name": "f.txt",
+    }
+
+
+async def test_rename_in_place_maps_conflict_to_file_exists():
+    fs = make_fs()
+    response = MagicMock(status_code=409)
+    error = httpx.HTTPStatusError("conflict", request=MagicMock(), response=response)
+
+    with patch.object(
+        fs, "_path_to_node_id", new_callable=AsyncMock, return_value=NODE_ID
+    ):
+        with patch.object(fs, "_put", new_callable=AsyncMock, side_effect=error):
+            with pytest.raises(FileExistsError):
+                await fs._mv_file("/dir/old.txt", "/dir/taken.txt")
 
 
 # ---------------------------------------------------------------------------
