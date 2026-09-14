@@ -79,6 +79,7 @@ def test_seek_read(sample_fs):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_async_seek_read(sample_afs):
     """Supports seek and partial reads (async)."""
+
     async with await sample_afs._open_async("/nested/file2", "rb") as f:
         f.seek(1)
         assert await f.read(1) == b"o"
