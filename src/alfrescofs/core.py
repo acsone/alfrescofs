@@ -159,8 +159,8 @@ class RenditionNotSupportedError(Exception):
 def node(node_id: str, *parts: str) -> str:
     """Get Alfresco REST paths for node-based endpoints.
 
-    Simple helper that allows higher-level code to not have to manually concatenate
-    'nodes/{id}/...'.
+    Simple helper that allows higher-level code to not have to manually
+    concatenate 'nodes/{id}/...'.
     """
     node_id = node_id.strip("/")
     suffix = "/".join(p.strip("/") for p in parts if p)
@@ -807,10 +807,11 @@ class AlfrescoFS(AsyncFileSystem):
         return {"targetParentId": nid, "name": name}
 
     async def _post_node_action(self, url, body, target_path):
-        """POST a copy or a move. Raise a 409 when the name is taken.
+        """POST a copy or a move.
 
-        The endpoints do not support autoRename, so the caller has to
-        pick a new name.
+        Raise a 409 when the name is taken.         The endpoints do not
+        support autoRename, so the caller has to         pick a new
+        name.
         """
         try:
             return await self._post(url, json=body)
