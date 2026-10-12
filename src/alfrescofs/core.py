@@ -193,6 +193,7 @@ class AlfrescoFS(AsyncFileSystem):
         root_path: str = "/",
         content_app_url: Optional[str] = None,
         share_url: Optional[str] = None,
+        headers: dict | None = None,
         **kwargs,
     ):
         from fsspec.asyn import get_loop
@@ -238,6 +239,7 @@ class AlfrescoFS(AsyncFileSystem):
         self._oauth2_params = oauth2_client_params
         self._verify = verify
         self._timeout = timeout
+        self._headers = headers
         self.retries = retries
         resolved_content_app_url = content_app_url or os.getenv(
             "ALFRESCOFS_CONTENT_APP_URL"
@@ -296,6 +298,7 @@ class AlfrescoFS(AsyncFileSystem):
                     follow_redirects=True,
                     verify=self._verify,
                     timeout=httpx.Timeout(self._timeout),
+                    headers=self._headers,
                     auth=httpx.BasicAuth(self._username, self._password),
                 )
 
@@ -307,6 +310,7 @@ class AlfrescoFS(AsyncFileSystem):
                     follow_redirects=True,
                     verify=self._verify,
                     timeout=httpx.Timeout(self._timeout),
+                    headers=self._headers,
                     **self._oauth2_params,
                 )
 

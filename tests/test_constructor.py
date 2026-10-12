@@ -109,6 +109,28 @@ def test_auth_clients_oauth2():
         AlfrescoFS(base_url=BASE_URL, auth_type="oauth2")._get_client()
 
 
+@pytest.mark.parametrize(
+    "fs_kwargs",
+    [
+        {"auth_type": "basic", "username": "u", "password": "p"},
+        {
+            "auth_type": "oauth2",
+            "oauth2_client_params": {
+                "client_id": "id",
+                "client_secret": "s",
+                "token_endpoint": "http://t/",
+            },
+        },
+    ],
+)
+def test_auth_clients_send_headers(fs_kwargs):
+    fs = AlfrescoFS(
+        base_url=BASE_URL, headers={"Accept-Language": "fr-BE"}, **fs_kwargs
+    )
+
+    assert fs._get_client().headers["Accept-Language"] == "fr-BE"
+
+
 def test_oauth2_env_logic():
     """OAuth2 params are completed from env, but explicit values take precedence."""
     env = {
