@@ -949,7 +949,9 @@ class AlfrescoFS(AsyncFileSystem):
         node_id = response.json()["entry"]["id"]
 
         if properties or aspects:
-            await self._update_metadata(path, properties=properties, aspects=aspects)
+            await self._update_metadata(
+                path, item_id=node_id, properties=properties, aspects=aspects
+            )
 
         return node_id
 

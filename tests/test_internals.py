@@ -481,27 +481,24 @@ async def test_mkdir_returns_node_id():
 
 
 async def test_mkdir_with_properties_and_aspects():
-    """Properties and aspects are forwarded in the POST body."""
+    """Properties and aspects are applied to the created node."""
     fs = make_fs()
-    captured = {}
-
-    async def fake_post(url, **kwargs):
-        captured.update(kwargs.get("json", {}))
-        return MagicMock(json=lambda: MKDIR_RESPONSE)
+    post = AsyncMock(return_value=MagicMock(json=lambda: MKDIR_RESPONSE))
+    put = AsyncMock()
 
     with patch.object(fs, "_path_to_node_id", side_effect=_mkdir_nid_side_effect):
-        with patch.object(fs, "_post", side_effect=fake_post):
+        with patch.object(fs, "_post", post), patch.object(fs, "_put", put):
             await fs._mkdir(
                 "/newfolder",
                 properties={"cm:title": "My Folder"},
                 aspects=["cm:titled", "cm:auditable"],
             )
 
-    assert captured["properties"] == {"cm:title": "My Folder"}
-    assert captured["aspectNames"] == [
-        "cm:titled",
-        "cm:auditable",
-    ]
+    assert str(put.call_args.args[0]).endswith("nodes/new-folder-id")
+    assert put.call_args.kwargs["json"] == {
+        "properties": {"cm:title": "My Folder"},
+        "aspectNames": ["cm:titled", "cm:auditable"],
+    }
 
 
 async def test_mkdir_without_properties_omits_keys():
