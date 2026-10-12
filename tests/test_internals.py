@@ -685,13 +685,13 @@ def test_weburl_absent_without_content_app_url():
     assert "weburl" not in info
 
 
-def test_directory_has_no_weburl():
-    """Directories never have a web URL."""
+def test_directory_weburl_opens_folder():
+    """Directories link to their folder view."""
     fs = make_fs(content_app_url=CONTENT_APP_URL)
 
     info = fs._node_entry_to_fsspec_info(_dir_entry())
 
-    assert "weburl" not in info
+    assert info["weburl"] == f"{CONTENT_APP_URL}/#/nodes/dir-id/children"
 
 
 # ---------------------------------------------------------------------------

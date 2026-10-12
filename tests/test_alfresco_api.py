@@ -99,7 +99,7 @@ async def test_list_deleted_nodes_returns_entries():
         return trash_payload([TRASH_ENTRY_1, TRASH_ENTRY_2])
 
     with patch.object(fs, "_get_json", side_effect=fake_get):
-        result = await fs._list_deleted_nodes()
+        result = await fs._list_trash()
 
     assert len(result) == 2
     assert result[0]["id"] == "deleted-1"
@@ -118,7 +118,7 @@ async def test_list_deleted_nodes_pagination():
     )
 
     with patch.object(fs, "_get_json", mock_get):
-        result = await fs._list_deleted_nodes()
+        result = await fs._list_trash()
 
     assert len(result) == 2
     assert mock_get.call_count == 2
@@ -134,7 +134,7 @@ async def test_restore_deleted_node_calls_endpoint():
     with patch.object(
         fs, "_post", new_callable=AsyncMock, return_value=mock_resp
     ) as mock_post:
-        await fs._restore_deleted_node(NODE_ID)
+        await fs._restore(NODE_ID)
 
     url_arg = str(mock_post.call_args[0][0])
     assert f"deleted-nodes/{NODE_ID}/restore" in url_arg
@@ -145,7 +145,7 @@ async def test_purge_deleted_node_calls_endpoint():
     fs = make_fs()
 
     with patch.object(fs, "_delete", new_callable=AsyncMock) as mock_delete:
-        await fs._purge_deleted_node(NODE_ID)
+        await fs._purge(NODE_ID)
 
     url_arg = str(mock_delete.call_args[0][0])
     assert f"deleted-nodes/{NODE_ID}" in url_arg
@@ -188,10 +188,10 @@ async def test_download_rendition_content_raises_if_not_file():
 
     with patch.object(fs, "_isfile", new_callable=AsyncMock, return_value=False):
         with pytest.raises(FileNotFoundError):
-            await fs._download_rendition_content("/dir")
+            await fs._get_rendition_content("/dir")
 
 
-async def test_download_rendition_content():
+async def test_get_rendition_content():
     """Fetches binary content of a rendition."""
     fs = make_fs()
 
@@ -206,7 +206,7 @@ async def test_download_rendition_content():
             with patch.object(
                 fs, "_get", new_callable=AsyncMock, return_value=mock_resp
             ):
-                result = await fs._download_rendition_content("/file.docx")
+                result = await fs._get_rendition_content("/file.docx")
 
     mock_url.assert_called_once_with(
         path="/file.docx", node_id=None, parts=("renditions", "pdf", "content")
